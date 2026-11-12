@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ordering System · La Casa De Los Trucos</title>
+    <link rel="stylesheet" href="styles.css?v=2026-11-11j">
+</head>
+<body>
+    <div id="toast"></div>
+
+    <header>
+        <div class="header-content">
+            <img src="logo.png" alt="" class="app-logo" onerror="this.style.display='none'">
+            <div class="header-title">
+                <h1>La Casa De Los Trucos</h1>
+                <small>Ordering System</small>
+            </div>
+            <div class="backup-actions">
+                <button onclick="exportBackup()" title="Save companies and orders to a file">Export Backup</button>
+                <button onclick="document.getElementById('backup-upload').click()" title="Load a backup file from another computer">Import Backup</button>
+                <button onclick="showSettingsModal()" class="btn-primary" title="Autosave, store info and data">Settings</button>
+                <input type="file" id="backup-upload" accept=".json,application/json" class="hidden" onchange="handleBackupFile(event)">
+            </div>
+        </div>
+    </header>
+
+    <!-- Overdue / due-soon invoices -->
+    <div id="invoice-alerts" class="hidden"></div>
+
+    <main>
+        <!-- ================= COMPANIES ================= -->
+        <section class="panel" id="companies-panel">
+            <div class="panel-header">
+                <h2>Companies</h2>
+                <div class="toolbar">
+                    <button onclick="showCompanyModal()" class="btn-add">+ Add Company</button>
+                </div>
+            </div>
+            <div id="companies-list"></div>
+            <div id="company-details" class="hidden">
+                <div id="company-info"></div>
+            </div>
+        </section>
+
+        <!-- ================= INVENTORY ================= -->
+        <section class="panel" id="inventory-panel">
+            <div class="panel-header">
+                <h2>Inventory</h2>
+                <div class="toolbar">
+                    <button onclick="document.getElementById('csv-upload-sales').click()" title="Load this year's sales file (2026.csv)">Upload Sales</button>
+                    <button onclick="document.getElementById('csv-upload-items').click()" title="Load the full item list (items.csv)">Upload Items</button>
+                    <button onclick="showCostChanges()" title="Items whose cost went up at the last Upload Items">Cost Changes</button>
+                    <button onclick="showCustomItemModal()" class="btn-add">+ Custom Item</button>
+                </div>
+            </div>
+            <input type="file" id="csv-upload-sales" accept=".csv" class="hidden" onchange="handleCSVUpload(event)">
+            <input type="file" id="csv-upload-items" accept=".csv" class="hidden" onchange="handleCSVUpload(event)">
+
+            <input type="text" id="search" placeholder="Search by SKU, supplier or description" oninput="filterItems()">
+            <div class="toolbar-row">
+                <select id="sort" onchange="sortItems()" title="Sort by">
+                    <option value="description">Sort: Description</option>
+                    <option value="supplier">Sort: Supplier</option>
+                    <option value="sku">Sort: SKU</option>
+                    <option value="onHand">Sort: On Hand</option>
+                    <option value="qtySold">Sort: Qty Sold</option>
+                    <option value="sales">Sort: Sales</option>
+                    <option value="lastSold">Sort: Last Sold</option>
+                    <option value="cost">Sort: Cost</option>
+                    <option value="reorder">Sort: Reorder Qty</option>
+                </select>
+                <button onclick="toggleSort()" id="sort-btn" title="Change sort direction">↑</button>
+                <select id="inv-supplier-filter" onchange="filterItems(true)" class="inline-select" title="Show one supplier only">
+                    <option value="">All suppliers</option>
+                </select>
+                <label class="check-label">
+                    <input type="checkbox" id="reorder-only" onchange="filterItems(true)">
+                    Only items to reorder <span id="reorder-count"></span>
+                </label>
+            </div>
+
+            <div class="scrollable-table">
+                <table id="inventory-table">
+                    <thead>
+                        <tr>
+                            <th>SKU</th>
+                            <th>Description / Supplier</th>
+                            <th>On Hand</th>
+                            <th title="Quantity sold this year, with sales dollars below">Sold / $</th>
+                            <th>Last Sold</th>
+                            <th>Cost</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="inventory-body"></tbody>
+                </table>
+            </div>
+            <!-- Drag to make the item list taller or shorter -->
+            <div id="inv-resizer" class="v-resizer" role="separator" aria-orientation="horizontal"
+                 title="Drag to make the list taller or shorter · double-click to reset"><span class="grip"></span><span class="label">Drag to resize list</span><span class="grip"></span></div>
+        </section>
+
+        <!-- Drag this bar to make Inventory or the Order Builder wider -->
+        <div id="panel-splitter" class="splitter" title="Drag to resize · double-click to reset" role="separator" aria-orientation="vertical"></div>
+
+        <!-- ================= ORDERS ================= -->
+        <section class="panel" id="order-panel">
+            <div class="tabs">
+                <button onclick="switchTab('builder')" class="tab active" id="tab-builder"><span class="hide-compact">Order </span>Builder</button>
+                <button onclick="switchTab('reorder')" class="tab" id="tab-reorder">Reorder</button>
+                <button onclick="switchTab('ledger')" class="tab" id="tab-ledger">Ledger</button>
+                <button onclick="switchTab('dead')" class="tab" id="tab-dead">Dead<span class="hide-compact"> Stock</span></button>
+            </div>
+
+            <!-- Order Builder -->
+            <div id="builder-content" class="tab-content">
+                <div id="draft-banner" class="draft-banner hidden"></div>
+                <div id="order-company">Select a company</div>
+                <div class="order-meta-row">
+                    <label>Order date
+                        <input type="date" id="order-date">
+                    </label>
+                    <label>PO number
+                        <input type="text" id="order-po" placeholder="Automatic">
+                    </label>
+                </div>
+                <div class="scrollable-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="sortable" data-sort="sku" onclick="sortOrderItems('sku')" title="Sort by SKU">SKU</th>
+                                <th class="sortable" data-sort="description" onclick="sortOrderItems('description')" title="Sort by description">Description</th>
+                                <th class="sortable" data-sort="qty" onclick="sortOrderItems('qty')" title="Sort by quantity">Qty</th>
+                                <th class="sortable" data-sort="cost" onclick="sortOrderItems('cost')" title="Sort by cost">Cost</th>
+                                <th class="sortable num" data-sort="lineTotal" onclick="sortOrderItems('lineTotal')" title="Sort by line total">Total</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="order-body"></tbody>
+                    </table>
+                </div>
+                <div class="totals">
+                    <div>Subtotal <span id="subtotal">0.00</span></div>
+                    <div class="total">Total <span id="total">0.00</span></div>
+                </div>
+                <div id="order-thresholds"></div>
+                <div class="save-row">
+                    <button onclick="saveOrder(false)" id="save-btn" disabled title="Save and keep working on this order (Ctrl+S)">Save Order <kbd>Ctrl+S</kbd></button>
+                    <button onclick="saveOrder(true)" id="save-close-btn" class="btn-save-close" disabled title="Save, then clear the builder for a new order (Ctrl+Shift+S)">Save &amp; Close</button>
+                </div>
+                <div class="builder-actions">
+                    <button onclick="printBuilderPO()">Print / PDF PO</button>
+                    <button onclick="emailBuilderPO()">Email to Rep</button>
+                    <button onclick="clearOrder()" title="Close this order without saving changes and start a new one">Close / New</button>
+                </div>
+                <div id="autosave-status" class="autosave-status"></div>
+            </div>
+
+            <!-- Reorder suggestions -->
+            <div id="reorder-content" class="tab-content hidden">
+                <div class="reorder-controls">
+                    <label>Supplier
+                        <select id="reorder-supplier" onchange="onReorderSupplierChange()"></select>
+                    </label>
+                    <label>Sold at least
+                        <input type="number" id="reorder-min-sold" value="2" min="1" onchange="onReorderSettingsChange()">
+                    </label>
+                    <label>Restock to
+                        <select id="reorder-plan" onchange="onReorderSettingsChange()">
+                            <option value="50">50% of this year's sales</option>
+                            <option value="75">75% of this year's sales</option>
+                            <option value="100" selected>100% of this year's sales</option>
+                            <option value="125">125% of this year's sales</option>
+                            <option value="150">150% of this year's sales</option>
+                        </select>
+                    </label>
+                </div>
+                <div id="reorder-link-note" class="reorder-note"></div>
+                <div id="reorder-summary" class="reorder-summary"></div>
+                <div class="scrollable-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>SKU</th>
+                                <th>Description</th>
+                                <th class="num">Sold</th>
+                                <th class="num">On Hand</th>
+                                <th class="num">On Order</th>
+                                <th>Order Qty</th>
+                            </tr>
+                        </thead>
+                        <tbody id="reorder-body"></tbody>
+                    </table>
+                </div>
+                <div class="tab-footer">
+                    <button onclick="addReorderToOrder()" class="btn-add">Add Checked to Order</button>
+                    <button onclick="reorderSelectAll(true)">Check All</button>
+                    <button onclick="reorderSelectAll(false)">Uncheck All</button>
+                </div>
+            </div>
+
+            <!-- Ledger -->
+            <div id="ledger-content" class="tab-content hidden">
+                <div class="ledger-head">
+                    <h3>All Orders: <span id="ledger-total-amount">$0.00</span></h3>
+                    <div class="ledger-filters">
+                        <select id="ledger-status-filter" onchange="renderOrdersLedger()">
+                            <option value="all">All orders</option>
+                            <option value="open">Not fully received</option>
+                            <option value="received">Received</option>
+                        </select>
+                        <select id="ledger-year-filter" onchange="renderOrdersLedger()"></select>
+                    </div>
+                </div>
+                <div class="scrollable-table" id="orders-list"></div>
+            </div>
+
+            <!-- Dead stock -->
+            <div id="dead-content" class="tab-content hidden">
+                <div class="reorder-controls">
+                    <label>Not sold in
+                        <select id="dead-years" onchange="renderDeadStock()">
+                            <option value="1">1 year or more</option>
+                            <option value="2" selected>2 years or more</option>
+                            <option value="3">3 years or more</option>
+                            <option value="5">5 years or more</option>
+                        </select>
+                    </label>
+                    <label>Supplier
+                        <select id="dead-supplier" onchange="renderDeadStock()"><option value="">All suppliers</option></select>
+                    </label>
+                </div>
+                <label class="check-label" style="margin-bottom:0.5rem;">
+                    <input type="checkbox" id="dead-never" onchange="renderDeadStock()">
+                    Include items with no sale date in the POS
+                </label>
+                <div id="dead-summary" class="reorder-summary"></div>
+                <div class="scrollable-table">
+                    <table>
+                        <thead><tr><th>SKU</th><th>Description</th><th class="num">On Hand</th><th>Last Sold</th><th class="num">Cost</th><th class="num">Value</th></tr></thead>
+                        <tbody id="dead-body"></tbody>
+                    </table>
+                </div>
+                <div class="tab-footer">
+                    <button onclick="downloadDeadStock()">Download Excel List</button>
+                </div>
+            </div>
+
+            <!-- Dashboard -->
+            <div class="stats">
+                <h3>Dashboard</h3>
+                <div class="stat-grid">
+                    <div class="stat"><span>Companies</span><strong id="stat-companies">0</strong></div>
+                    <div class="stat"><span>Orders this year</span><strong id="stat-orders">0</strong></div>
+                </div>
+                <div id="top-suppliers"></div>
+            </div>
+        </section>
+    </main>
+
+    <!-- r1 / small screens: one section at a time, chosen here -->
+    <nav id="compact-nav" aria-label="Sections">
+        <button data-view="companies" onclick="setCompactView('companies')">Companies</button>
+        <button data-view="inventory" onclick="setCompactView('inventory')">Items</button>
+        <button data-view="orders" onclick="setCompactView('orders')">Order<span id="compact-order-count"></span></button>
+        <button data-view="more" onclick="showSettingsModal()">More</button>
+    </nav>
+
+    <!-- ================= POP-UP WINDOWS ================= -->
+
+    <!-- Settings -->
+    <div id="settings-modal" class="modal">
+        <div class="modal-content">
+            <h2>Settings</h2>
+            <div class="tabs settings-tabs">
+                <button class="tab active" id="stab-general" onclick="switchSettingsTab('general')">General</button>
+                <button class="tab" id="stab-store" onclick="switchSettingsTab('store')">Store Info</button>
+                <button class="tab" id="stab-data" onclick="switchSettingsTab('data')">Data</button>
+            </div>
+
+            <div id="spane-general" class="settings-pane">
+                <div class="settings-row">
+                    <div class="label">
+                        <strong>Screen layout</strong>
+                        <span>Compact shows one section at a time for small screens like the rabbit r1. Automatic switches by itself.</span>
+                    </div>
+                    <select id="set-layout">
+                        <option value="auto">Automatic</option>
+                        <option value="desktop">Desktop</option>
+                        <option value="compact">r1 compact</option>
+                    </select>
+                </div>
+                <div class="settings-row">
+                    <div class="label">
+                        <strong>Autosave open orders</strong>
+                        <span>Saves a draft of the order in the Order Builder so it can be restored if the program closes.</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="set-autosave" onchange="onAutosaveToggle()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="settings-row">
+                    <div class="label">
+                        <strong>Autosave every</strong>
+                        <span>How often the draft is saved while an order is open.</span>
+                    </div>
+                    <select id="set-autosave-minutes">
+                        <option value="1">1 minute</option>
+                        <option value="2">2 minutes</option>
+                        <option value="5">5 minutes</option>
+                        <option value="10">10 minutes</option>
+                        <option value="15">15 minutes</option>
+                        <option value="30">30 minutes</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="spane-store" class="settings-pane hidden">
+                <p class="record-meta">Printed at the top of your purchase orders.</p>
+                <label class="field-label">Store name</label>
+                <input type="text" id="st-name" placeholder="Store name">
+                <label class="field-label">Address</label>
+                <textarea id="st-address" placeholder="One line per row"></textarea>
+                <div class="form-grid-2">
+                    <div>
+                        <label class="field-label">Phone</label>
+                        <input type="tel" id="st-phone">
+                    </div>
+                    <div>
+                        <label class="field-label">Email</label>
+                        <input type="email" id="st-email">
+                    </div>
+                </div>
+                <label class="field-label">Website</label>
+                <input type="text" id="st-website" placeholder="www.example.com">
+                <div class="form-grid-2">
+                    <div>
+                        <label class="field-label">Ordering group</label>
+                        <input type="text" id="st-orderingGroup" placeholder="Buying group / member #">
+                    </div>
+                    <div>
+                        <label class="field-label">Tax ID</label>
+                        <input type="text" id="st-taxId" placeholder="Resale / EIN number">
+                    </div>
+                </div>
+                <label class="field-label">Memo line</label>
+                <textarea id="st-memo" placeholder="Printed at the bottom of every PO, e.g. shipping or billing instructions"></textarea>
+                <label class="field-label">Ship-to address (if different)</label>
+                <textarea id="st-shipTo" placeholder="Leave empty to use the address above"></textarea>
+            </div>
+
+            <div id="spane-data" class="settings-pane hidden">
+                <div class="settings-row">
+                    <div class="label">
+                        <strong>Backup</strong>
+                        <span>Move companies and orders to another computer, or keep a safe copy.</span>
+                    </div>
+                    <div style="display:flex;gap:0.5rem;">
+                        <button onclick="exportBackup()">Export</button>
+                        <button onclick="document.getElementById('backup-upload').click()">Import</button>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <div class="label">
+                        <strong>Load backup from website</strong>
+                        <span>Reads backup.json from the same folder as this page. Useful on the r1, which can't pick files.</span>
+                    </div>
+                    <button onclick="loadBackupFromSite()">Load</button>
+                </div>
+                <div class="danger-zone">
+                    <div class="settings-row">
+                        <div class="label">
+                            <strong>Reset inventory</strong>
+                            <span>Deletes all items so you can load fresh files. Companies and orders are kept.</span>
+                        </div>
+                        <button onclick="closeModal('settings-modal'); clearInventory();" class="btn-danger">Reset Inventory</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button onclick="closeModal('settings-modal')">Cancel</button>
+                <button onclick="saveSettings()" class="btn-add">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Company -->
+    <div id="company-modal" class="modal">
+        <div class="modal-content">
+            <h2>Company</h2>
+            <div class="form-grid-2">
+                <div>
+                    <label class="field-label">Company name *</label>
+                    <input type="text" id="c-name" required>
+                </div>
+                <div>
+                    <label class="field-label">Customer number *</label>
+                    <input type="text" id="c-number" required>
+                </div>
+            </div>
+            <label class="field-label">Address</label>
+            <input type="text" id="c-address">
+            <div class="form-grid-2">
+                <div>
+                    <label class="field-label">Representative</label>
+                    <input type="text" id="c-rep">
+                </div>
+                <div>
+                    <label class="field-label">Phone</label>
+                    <input type="tel" id="c-phone">
+                </div>
+            </div>
+            <label class="field-label">Email</label>
+            <input type="email" id="c-email">
+            <label class="field-label">Notes</label>
+            <textarea id="c-notes"></textarea>
+            <div class="form-grid">
+                <label>Payment terms
+                    <select id="c-terms" onchange="onTermsSelectChange()">
+                        <option value="">Not set</option>
+                        <option value="0">Due on receipt</option>
+                        <option value="10">Net 10</option>
+                        <option value="15">Net 15</option>
+                        <option value="30">Net 30</option>
+                        <option value="45">Net 45</option>
+                        <option value="60">Net 60</option>
+                        <option value="90">Net 90</option>
+                        <option value="custom">Other (days)</option>
+                    </select>
+                    <input type="number" id="c-terms-custom" class="hidden" min="0" placeholder="Days">
+                </label>
+                <label>Minimum order ($)
+                    <input type="number" id="c-min-order" min="0" step="0.01" placeholder="None">
+                </label>
+                <label>Free shipping at ($)
+                    <input type="number" id="c-free-freight" min="0" step="0.01" placeholder="None">
+                </label>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeModal('company-modal')">Cancel</button>
+                <button onclick="saveCompany()" class="btn-add">Save Company</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add item to order -->
+    <div id="item-modal" class="modal">
+        <div class="modal-content small">
+            <h2>Add to Order</h2>
+            <div id="item-info"></div>
+            <label class="field-label">Quantity</label>
+            <input type="number" id="item-qty" value="1" min="1"
+                   oninput="updateItemModalButtons()"
+                   onkeydown="if (event.key === 'Enter') { event.preventDefault(); addItemToOrder('add'); }">
+            <div id="item-pack-hint" class="field-hint pack-warn hidden"></div>
+            <div class="modal-footer">
+                <button onclick="closeModal('item-modal')">Cancel</button>
+                <button onclick="addItemToOrder('set')" id="item-set-btn" class="hidden">Change qty</button>
+                <button onclick="addItemToOrder('add')" id="item-add-btn" class="btn-add">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom / edit item -->
+    <div id="custom-modal" class="modal">
+        <div class="modal-content">
+            <h2>Custom Item</h2>
+            <div class="form-grid-2">
+                <div>
+                    <label class="field-label">SKU *</label>
+                    <input type="text" id="ci-sku" required>
+                </div>
+                <div>
+                    <label class="field-label">Supplier *</label>
+                    <input type="text" id="ci-supplier" required>
+                </div>
+            </div>
+            <label class="field-label">Description *</label>
+            <input type="text" id="ci-desc" required>
+            <div class="form-grid">
+                <label>On hand
+                    <input type="number" id="ci-onhand" value="0">
+                </label>
+                <label>Cost *
+                    <input type="number" id="ci-cost" step="0.01" required>
+                </label>
+                <label>Last sold
+                    <input type="date" id="ci-date">
+                </label>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeModal('custom-modal')">Cancel</button>
+                <button onclick="saveCustomItem()" class="btn-add">Save Item</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- External order -->
+    <div id="external-order-modal" class="modal">
+        <div class="modal-content small">
+            <h2 id="external-order-modal-title">Add External Order</h2>
+            <label class="field-label">Order date *</label>
+            <input type="date" id="eo-date" required>
+            <label class="field-label">PO number *</label>
+            <input type="text" id="eo-po" required>
+            <label class="field-label">Amount *</label>
+            <input type="number" id="eo-amount" step="0.01" required>
+            <div class="modal-footer">
+                <button onclick="closeModal('external-order-modal')">Cancel</button>
+                <button onclick="saveExternalOrder()" class="btn-add">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Invoice -->
+    <div id="invoice-modal" class="modal">
+        <div class="modal-content small">
+            <h2 id="invoice-modal-title">Add Invoice</h2>
+            <label class="field-label">Invoice number *</label>
+            <input type="text" id="inv-number" required>
+            <label class="field-label">Amount *</label>
+            <input type="number" id="inv-amount" step="0.01" required>
+            <label class="field-label">Due date</label>
+            <input type="date" id="inv-due-date">
+            <div id="inv-terms-hint" class="field-hint hidden"></div>
+            <label class="field-label">Status</label>
+            <select id="inv-status" onchange="onInvoiceStatusChange()">
+                <option value="Outstanding">Outstanding</option>
+                <option value="Paid">Paid</option>
+            </select>
+            <div class="form-grid-2">
+                <div>
+                    <label class="field-label">Date paid</label>
+                    <input type="date" id="inv-paid-date" disabled>
+                </div>
+                <div>
+                    <label class="field-label">Payment method</label>
+                    <input type="text" id="inv-payment-method" placeholder="Check / Card / ACH" disabled>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeModal('invoice-modal')">Cancel</button>
+                <button onclick="saveInvoice()" class="btn-add">Save Invoice</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Discrepancy -->
+    <div id="discrepancy-modal" class="modal">
+        <div class="modal-content small">
+            <h2 id="discrepancy-modal-title">Add Discrepancy</h2>
+            <label class="field-label">What was wrong? *</label>
+            <textarea id="disc-desc"></textarea>
+            <label class="field-label">Date</label>
+            <input type="date" id="disc-date">
+            <div class="modal-footer">
+                <button onclick="closeModal('discrepancy-modal')">Cancel</button>
+                <button onclick="saveDiscrepancy()" class="btn-add">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Credit memo -->
+    <div id="credit-modal" class="modal">
+        <div class="modal-content small">
+            <h2 id="credit-modal-title">Add Credit Memo</h2>
+            <label class="field-label">Description *</label>
+            <input type="text" id="cred-desc" required>
+            <label class="field-label">Amount *</label>
+            <input type="number" id="cred-amount" step="0.01" required>
+            <label class="field-label">Date</label>
+            <input type="date" id="cred-date">
+            <div class="modal-footer">
+                <button onclick="closeModal('credit-modal')">Cancel</button>
+                <button onclick="saveCredit()" class="btn-add">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cost changes -->
+    <div id="cost-modal" class="modal">
+        <div class="modal-content wide">
+            <h2>Cost Increases</h2>
+            <div id="cost-summary" class="record-meta"></div>
+            <div class="scrollable-table" style="max-height:420px;">
+                <table>
+                    <thead><tr><th>SKU</th><th>Description</th><th class="num">Old Cost</th><th class="num">New Cost</th><th class="num">Change</th></tr></thead>
+                    <tbody id="cost-body"></tbody>
+                </table>
+            </div>
+            <div class="modal-footer">
+                <button onclick="downloadCostChanges()" class="footer-left">Download Excel List</button>
+                <button onclick="closeModal('cost-modal')" class="btn-add">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Receive order -->
+    <div id="receive-modal" class="modal">
+        <div class="modal-content wide">
+            <h2>Receive Order</h2>
+            <div id="receive-title" class="record-meta"></div>
+            <p class="record-meta">Enter how many of each item arrived. Missing or extra items can be recorded as a discrepancy for this company.</p>
+            <div class="scrollable-table" style="max-height:350px;">
+                <table>
+                    <thead><tr><th>SKU</th><th>Description</th><th class="num">Ordered</th><th>Received</th></tr></thead>
+                    <tbody id="receive-body"></tbody>
+                </table>
+            </div>
+            <label class="check-label" style="margin-top:0.6rem;">
+                <input type="checkbox" id="receive-discrepancy" checked>
+                Record missing or extra items as a discrepancy
+            </label>
+            <div class="modal-footer">
+                <button onclick="receiveAllArrived()" class="footer-left">Everything Arrived</button>
+                <button onclick="closeModal('receive-modal')">Cancel</button>
+                <button onclick="saveReceiving()" class="btn-add">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import backup -->
+    <div id="backup-modal" class="modal">
+        <div class="modal-content">
+            <h2>Import Backup</h2>
+            <div id="backup-info" class="record-meta"></div>
+            <p class="record-meta"><strong>Merge</strong> adds the companies, orders and invoices from the backup that this computer doesn't have yet. Nothing here is deleted.</p>
+            <p class="record-meta"><strong>Replace</strong> deletes this computer's companies and orders and makes it an exact copy of the backup.</p>
+            <div class="modal-footer">
+                <button onclick="closeModal('backup-modal')" class="footer-left">Cancel</button>
+                <button onclick="importBackup('replace')" class="btn-danger">Replace</button>
+                <button onclick="importBackup('merge')" class="btn-add">Merge</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="xlsx.full.min.js"></script>
+    <script src="app.js?v=2026-11-11j"></script>
+</body>
+</html>
