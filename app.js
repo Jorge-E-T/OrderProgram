@@ -267,6 +267,8 @@ let searchTimeout = null;
 let renderChunkTimeout = null; // Tracks background rendering to cancel it if needed
 // FIX: drawing all 65,000 rows froze/crashed the browser. Show 500 at a time.
 const INVENTORY_PAGE = 500;
+// r1: 50 at a time keeps the list short and quick to scroll; desktop shows 500
+const inventoryPageSize = () => (document.body && document.body.classList.contains('compact')) ? 50 : INVENTORY_PAGE;
 let inventoryLimit = INVENTORY_PAGE;
 let lastInventorySearch = '';
 
@@ -1476,26 +1478,26 @@ function filterItems(immediate = false) {
 
         // New search -> start again at the first 500
         const searchKey = rawSearch + (onlyReorder ? '|reorder' : '') + '|' + supFilter.supplier;
-        if (searchKey !== lastInventorySearch) { inventoryLimit = INVENTORY_PAGE; lastInventorySearch = searchKey; }
+        const pageKey = searchKey + '|' + inventoryPageSize();
+        if (pageKey !== lastInventorySearch) { inventoryLimit = inventoryPageSize(); lastInventorySearch = pageKey; }
         const totalMatches = filtered.length;
         const visible = filtered.slice(0, inventoryLimit);
         const footerHTML = totalMatches > visible.length
-            ? `<tr class="inventory-more"><td colspan="7" style="text-align:center;padding:1rem;color:var(--text-muted);">
-                 Showing ${visible.length.toLocaleString()} of ${totalMatches.toLocaleString()} items. Type in Search to narrow it down, or
-                 <button class="btn-close" onclick="event.stopPropagation(); inventoryLimit += INVENTORY_PAGE; filterItems(true);">Show ${INVENTORY_PAGE} more</button>
-               </td></tr>`
+            ? `<tr class="inventory-more"><td colspan="7" style="text-align:center;padding:1rem;color:var(--text-muted);"><div class="more-inner">
+                 Showing ${visible.length.toLocaleString()} of ${totalMatches.toLocaleString()} items<span class="long-label">. Type in Search to narrow it down, or</span>
+                 <button class="btn-close" onclick="event.stopPropagation(); inventoryLimit += inventoryPageSize(); filterItems(true);">Show ${inventoryPageSize()} more</button>
+               </div></td></tr>`
             : '';
 
         // 3. GENERATE ROW HTML (Updated with Edit/Delete buttons)
         const generateRowHTML = (item) => `
             <tr onclick="showItemModal(${item.id})">
                 <td>${item.sku ? highlightMatch(item.sku, rawSearch) : '<em style="color:#ccc">N/A</em>'}</td>
-                <td>${item.description ? highlightMatch(item.description, rawSearch) : '<em class="muted">No description</em>'}${reorderFlagHTML(item)}${inOrderTagHTML(item)}
-                    <span class="sub">${highlightMatch(item.supplier, rawSearch)}</span>
-                    <span class="sub sku-compact">${highlightMatch(item.sku, rawSearch)}</span></td>
+                <td><span class="desc-main">${item.description ? highlightMatch(item.description, rawSearch) : '<em class="muted">No description</em>'}${reorderFlagHTML(item)}${inOrderTagHTML(item)}</span>
+                    <span class="sub desc-sub">${highlightMatch(item.supplier, rawSearch)}<span class="sku-compact"> · ${highlightMatch(item.sku, rawSearch)}</span></span></td>
                 <td style="${inventoryNeeds.has(item.id) && (Number(item.onHand) || 0) <= 0 ? 'color:var(--danger);font-weight:600;' : ''}">${item.onHand || 0}</td>
                 <td>${item.qtySold || 0}<span class="sub">$${(Number(item.sales) || 0).toFixed(2)}</span></td>
-                <td>${escapeHtml(item.lastSold)}</td>
+                <td><span class="date-long">${escapeHtml(item.lastSold)}</span><span class="date-short">${shortDate(item.lastSold)}</span></td>
                 <td>${(Number(item.cost) || 0).toFixed(2)}</td>
                 <td><div class="row-actions">
                     <button class="btn-icon" onclick="event.stopPropagation(); editItem(${item.id})" title="Edit item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
@@ -1886,7 +1888,7 @@ function renderOrderItems() {
     tbody.innerHTML = currentOrder.items.map((item, index) => `
         <tr>
             <td>${escapeHtml(item.sku)}</td>
-            <td>${escapeHtml(item.description)}${(() => {
+            <td><span class="order-line-name">${escapeHtml(item.description)}</span>${(() => {
                 const pack = packOf(inventoryItemFor(item));
                 if (pack <= 1) return '';
                 return item.qty % pack === 0
@@ -3736,7 +3738,9 @@ function isCompactWanted() {
 
 function applyLayout() {
     const on = isCompactWanted();
+    const changed = document.body.classList.contains('compact') !== on;
     document.body.classList.toggle('compact', on);
+    if (changed && typeof filterItems === 'function' && Array.isArray(items) && items.length) filterItems(true);
     if (on) setCompactView(compactView);
 }
 
@@ -3766,7 +3770,11 @@ window.addEventListener('resize', () => {
 // The r1 sends these as window events: 'scrollUp', 'scrollDown', 'sideClick'.
 function r1ScrollTarget() {
     const open = document.querySelector('.modal.show .modal-content');
-    return open || null;
+    if (open) return open;
+    if (document.body.classList.contains('compact') && document.body.dataset.view === 'inventory') {
+        return document.querySelector('#inventory-panel .scrollable-table');
+    }
+    return null;
 }
 function r1Scroll(amount) {
     // In compact mode the content area (main) scrolls, not the page
@@ -4144,7 +4152,8 @@ function searchTextFor(item) {
 // or use the arrow buttons above the Items list. The description stays in place.
 function scrollInventorySideways(dir) {
     const box = document.querySelector('#inventory-panel .scrollable-table');
-    if (box) box.scrollLeft += dir * Math.max(80, box.clientWidth * 0.6);
+    // Two clean views: ◀ = Qty / Sold, ▶ = Last Sold / Cost
+    if (box) box.scrollLeft = dir > 0 ? box.scrollWidth : 0;
 }
 
 (function () {
@@ -4185,3 +4194,10 @@ function scrollInventorySideways(dir) {
     document.addEventListener('pointerup', end, true);
     document.addEventListener('pointercancel', end, true);
 })();
+
+
+// r1: short dates (2017-04-29 -> 4/29/17) so Last Sold and Cost fit on the small screen
+function shortDate(v) {
+    const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${+m[2]}/${+m[3]}/${m[1].slice(2)}` : escapeHtml(v || '');
+}

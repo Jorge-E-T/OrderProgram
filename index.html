@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ordering System · La Casa De Los Trucos</title>
-    <link rel="stylesheet" href="styles.css?v=2026-11-12b">
+    <link rel="stylesheet" href="styles.css?v=2026-11-12d">
 </head>
 <body>
     <div id="toast"></div>
@@ -83,16 +83,13 @@
                 </select>
                 <label class="check-label">
                     <input type="checkbox" id="reorder-only" onchange="filterItems(true)">
-                    Only items to reorder <span id="reorder-count"></span>
+                    <span class="long-label">Only items to reorder</span><span class="short-label">Reorder</span> <span id="reorder-count"></span>
                 </label>
-            </div>
-
-            <!-- r1 only: the table is wider than the screen; swipe it or use the arrows -->
-            <div class="hscroll-bar" aria-hidden="true">
+                <!-- r1 only: move the list sideways -->
                 <button type="button" class="btn-sm hscroll-btn" onclick="scrollInventorySideways(-1)" title="Scroll left">◀</button>
-                <span>Swipe for Sold &amp; Cost</span>
                 <button type="button" class="btn-sm hscroll-btn" onclick="scrollInventorySideways(1)" title="Scroll right">▶</button>
             </div>
+
             <div class="scrollable-table">
                 <table id="inventory-table">
                     <thead>
@@ -652,6 +649,6 @@
     </div>
 
     <script src="xlsx.full.min.js"></script>
-    <script src="app.js?v=2026-11-12b"></script>
+    <script src="app.js?v=2026-11-12d"></script>
 </body>
 </html>
