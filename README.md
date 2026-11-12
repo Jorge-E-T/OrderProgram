@@ -38,6 +38,10 @@ It runs on a desktop computer and on the **rabbit r1** (compact layout).
 - The bar at the bottom switches between **Companies**, **Items**, **Order** and **More** (settings and backups).
 - **Scroll wheel** scrolls the screen. **Side button** presses the main button of any open window (for example *Add* in the Add to Order window).
 - Tap an item to add it to the order.
+- **Swipe the Items list left and right** (or tap ◀ ▶ above it) to see Sold, Last Sold and Cost. The description stays in place.
+- **Voice search:** hold the side button, say what you're looking for (for example *"5431 medieval monk"*), and let go. The words go into the Search box and the list is searched. You can also tap the microphone in the Search box to start, and tap it again to stop. If you're typing in another text box (like the PO number), the words go there instead.
+
+On a computer, the microphone in the Search box works in Chrome and Edge (the browser asks once for permission to use the microphone).
 
 ## Getting your data onto the r1
 

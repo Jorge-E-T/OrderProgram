@@ -4,10 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ordering System · La Casa De Los Trucos</title>
-    <link rel="stylesheet" href="styles.css?v=2026-11-11j">
+    <link rel="stylesheet" href="styles.css?v=2026-11-12b">
 </head>
 <body>
     <div id="toast"></div>
+    <!-- Shows "Listening…" while speech to text is on -->
+    <div id="voice-status" class="voice-status" role="status" aria-live="polite"></div>
 
     <header>
         <div class="header-content">
@@ -57,7 +59,12 @@
             <input type="file" id="csv-upload-sales" accept=".csv" class="hidden" onchange="handleCSVUpload(event)">
             <input type="file" id="csv-upload-items" accept=".csv" class="hidden" onchange="handleCSVUpload(event)">
 
-            <input type="text" id="search" placeholder="Search by SKU, supplier or description" oninput="filterItems()">
+            <div class="search-wrap">
+                <input type="text" id="search" placeholder="Search by SKU, supplier or description" oninput="filterItems()">
+                <button type="button" id="search-mic" class="search-mic" title="Search by voice (on the r1: hold the side button)" aria-label="Search by voice">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/><path d="M8 22h8"/></svg>
+                </button>
+            </div>
             <div class="toolbar-row">
                 <select id="sort" onchange="sortItems()" title="Sort by">
                     <option value="description">Sort: Description</option>
@@ -80,6 +87,12 @@
                 </label>
             </div>
 
+            <!-- r1 only: the table is wider than the screen; swipe it or use the arrows -->
+            <div class="hscroll-bar" aria-hidden="true">
+                <button type="button" class="btn-sm hscroll-btn" onclick="scrollInventorySideways(-1)" title="Scroll left">◀</button>
+                <span>Swipe for Sold &amp; Cost</span>
+                <button type="button" class="btn-sm hscroll-btn" onclick="scrollInventorySideways(1)" title="Scroll right">▶</button>
+            </div>
             <div class="scrollable-table">
                 <table id="inventory-table">
                     <thead>
@@ -639,6 +652,6 @@
     </div>
 
     <script src="xlsx.full.min.js"></script>
-    <script src="app.js?v=2026-11-11j"></script>
+    <script src="app.js?v=2026-11-12b"></script>
 </body>
 </html>

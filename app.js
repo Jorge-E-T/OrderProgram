@@ -1446,6 +1446,7 @@ function filterItems(immediate = false) {
         if (!searchInput) return; 
         
         const rawSearch = searchInput.value.toLowerCase().trim();
+        const searchWords = normalizeForSearch(rawSearch).split(' ').filter(Boolean);
         const tbody = document.getElementById('inventory-body');
 
         // 2. Filter (Safe Version)
@@ -1465,11 +1466,10 @@ function filterItems(immediate = false) {
             if (supFilter.active && (item.supplier || '').trim() !== supFilter.supplier) return false;
             if (!rawSearch) return true; // Show all if search is empty
 
-            const matchDesc = (item.description || '').toLowerCase().includes(rawSearch);
-            const matchSupp = (item.supplier || '').toLowerCase().includes(rawSearch);
-            const matchSku = (item.sku || '').toLowerCase().includes(rawSearch);
-            
-            return matchDesc || matchSupp || matchSku;
+            // NEW: each word is matched on its own, in any order
+            // ("5431 medieval monk" finds "HG 5431  MEDIEVAL MONK OS")
+            const hay = searchTextFor(item);
+            return searchWords.every(w => hay.includes(w));
         });
 
         sortItemsArray(filtered);
@@ -1491,7 +1491,8 @@ function filterItems(immediate = false) {
             <tr onclick="showItemModal(${item.id})">
                 <td>${item.sku ? highlightMatch(item.sku, rawSearch) : '<em style="color:#ccc">N/A</em>'}</td>
                 <td>${item.description ? highlightMatch(item.description, rawSearch) : '<em class="muted">No description</em>'}${reorderFlagHTML(item)}${inOrderTagHTML(item)}
-                    <span class="sub">${highlightMatch(item.supplier, rawSearch)}</span></td>
+                    <span class="sub">${highlightMatch(item.supplier, rawSearch)}</span>
+                    <span class="sub sku-compact">${highlightMatch(item.sku, rawSearch)}</span></td>
                 <td style="${inventoryNeeds.has(item.id) && (Number(item.onHand) || 0) <= 0 ? 'color:var(--danger);font-weight:600;' : ''}">${item.onHand || 0}</td>
                 <td>${item.qtySold || 0}<span class="sub">$${(Number(item.sales) || 0).toFixed(2)}</span></td>
                 <td>${escapeHtml(item.lastSold)}</td>
@@ -3399,15 +3400,28 @@ function downloadDeadStock() {
 // The text is escaped first, so names with < or & still display safely.
 function highlightMatch(text, term) {
     const str = String(text == null ? '' : text);
-    if (!term) return escapeHtml(str);
+    const words = String(term || '').toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return escapeHtml(str);
+    // Mark every character that belongs to any search word, then wrap each marked run
     const lower = str.toLowerCase();
-    const needle = term.toLowerCase();
-    let out = '', pos = 0, i;
-    while ((i = lower.indexOf(needle, pos)) !== -1) {
-        out += escapeHtml(str.slice(pos, i)) + '<mark class="search-hit">' + escapeHtml(str.slice(i, i + needle.length)) + '</mark>';
-        pos = i + needle.length;
+    const hit = new Array(str.length).fill(false);
+    words.forEach(w => {
+        let i = 0;
+        while ((i = lower.indexOf(w, i)) !== -1) {
+            for (let k = i; k < i + w.length; k++) hit[k] = true;
+            i += w.length;
+        }
+    });
+    let out = '', k = 0;
+    while (k < str.length) {
+        const on = hit[k];
+        let j = k;
+        while (j < str.length && hit[j] === on) j++;
+        const part = escapeHtml(str.slice(k, j));
+        out += on ? '<mark class="search-hit">' + part + '</mark>' : part;
+        k = j;
     }
-    return out + escapeHtml(str.slice(pos));
+    return out;
 }
 
 // =====================================================================
@@ -3768,6 +3782,7 @@ window.addEventListener('sideClick', () => {
     // One press can arrive twice ~50 ms apart: ignore the repeat
     const now = Date.now();
     if (now - lastSideClick < 350) return;
+    if (now - voiceLastPressEnd < 900) return;   // this was the end of a hold-to-talk
     lastSideClick = now;
     // Side button = the main button of whatever window is open
     const open = document.querySelector('.modal.show');
@@ -3890,4 +3905,283 @@ const INV_HEIGHT_KEY = 'lcInvHeight';
         fitToWindow();
         showToast('Item list back to its normal size', 'info');
     });
+})();
+
+
+// =====================================================================
+// ==================== SPEECH TO TEXT FOR SEARCH ======================
+// =====================================================================
+// rabbit r1: HOLD the side button, say what you're looking for, let go.
+//   The words go into the Search box and the item list is searched.
+//   If you're typing in another text box (PO number, notes...), the words go there instead.
+// Desktop (Chrome / Edge): click the microphone in the Search box, speak, and it searches.
+// The r1 part follows the same steps as the r1 voice code in the other program:
+//   longPressStart -> CreationVoiceHandler 'start', longPressEnd -> 'stop',
+//   and the words arrive in window.onPluginMessage as type 'sttEnded' with a transcript.
+let voiceLastPressEnd = 0;
+
+(function () {
+    const search = document.getElementById('search');
+    const mic = document.getElementById('search-mic');
+    const status = document.getElementById('voice-status');
+    if (!search) return;
+
+    const hasR1Voice = () => typeof CreationVoiceHandler !== 'undefined';
+    const WebSpeech = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    // ---------- shared ----------
+    let target = null;          // the text box the words will go into
+    let waiting = false;        // listening, or waiting for the words to come back
+    let giveUpTimer = null;
+    let otherHandler = null;    // any onPluginMessage handler installed by something else
+
+    function showStatus(text, kind = 'listening') {
+        if (!status) return;
+        status.textContent = text;
+        status.className = 'voice-status show ' + kind;
+    }
+    function hideStatus(delay = 0) {
+        if (!status) return;
+        setTimeout(() => { if (!waiting) status.className = 'voice-status'; }, delay);
+    }
+    function setMicState(on) { if (mic) mic.classList.toggle('listening', on); }
+
+    // A plain text box the user is typing in right now (not numbers or dates)
+    function focusedTextBox() {
+        const el = document.activeElement;
+        if (!el || el === search) return null;
+        const tag = (el.tagName || '').toUpperCase();
+        if (tag === 'TEXTAREA') return el;
+        if (tag === 'INPUT' && ['text', 'search', 'email', 'tel', ''].includes((el.type || '').toLowerCase())) return el;
+        return null;
+    }
+
+    function chooseTarget() {
+        return focusedTextBox() || search;
+    }
+
+    function putWords(words) {
+        let text = String(words || '').trim();
+        if (!text) { showStatus("Didn't catch that. Try again.", 'error'); waiting = false; setMicState(false); hideStatus(2500); return; }
+        const field = target && document.body.contains(target) ? target : search;
+        target = null;
+        waiting = false;
+        clearTimeout(giveUpTimer);
+        setMicState(false);
+
+        if (field === search) {
+            // Search: replace what was there, drop the period speech adds at the end
+            text = text.replace(/[.,!?;:]+$/, '');
+            if (document.body.classList.contains('compact')) setCompactView('inventory');
+            search.value = text;
+            filterItems(true);
+            showStatus('Searching: "' + text + '"', 'done');
+            hideStatus(2200);
+        } else {
+            // Any other text box: type the words where the cursor is
+            const start = field.selectionStart != null ? field.selectionStart : field.value.length;
+            const end = field.selectionEnd != null ? field.selectionEnd : field.value.length;
+            if (field.tagName !== 'TEXTAREA') text = text.replace(/[.,!?;:]+$/, '');
+            field.value = field.value.slice(0, start) + text + field.value.slice(end);
+            try { field.setSelectionRange(start + text.length, start + text.length); } catch (e) { /* ignore */ }
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            showStatus('Typed: "' + text + '"', 'done');
+            hideStatus(2200);
+        }
+    }
+
+    function startWaitingForWords() {
+        clearTimeout(giveUpTimer);
+        giveUpTimer = setTimeout(() => {
+            if (!waiting) return;
+            waiting = false;
+            setMicState(false);
+            showStatus("Didn't hear anything. Try again.", 'error');
+            hideStatus(2500);
+        }, 12000);
+    }
+
+    // ---------- rabbit r1 ----------
+    function r1Send(cmd) {
+        if (!hasR1Voice()) return false;
+        try { CreationVoiceHandler.postMessage(cmd); return true; } catch (e) { return false; }
+    }
+
+    function handlePluginMessage(data) {
+        if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch (e) { data = { message: data }; }
+        }
+        if (!data) return;
+        // The words can be at the top level or inside data.data (sometimes as text)
+        let type = data.type;
+        let transcript = data.transcript;
+        if (!transcript && data.data) {
+            let inner = data.data;
+            if (typeof inner === 'string') { try { inner = JSON.parse(inner); } catch (e) { inner = null; } }
+            if (inner && typeof inner === 'object') {
+                if (inner.transcript) transcript = inner.transcript;
+                if (!type && inner.type) type = inner.type;
+            }
+        }
+        if (type === 'sttEnded' && waiting) putWords(transcript);
+    }
+
+    function combinedHandler(data) {
+        try { handlePluginMessage(data); } catch (e) { console.warn('Voice error', e); }
+        if (otherHandler) { try { otherHandler(data); } catch (e) { /* ignore */ } }
+    }
+    function ensureHandler() {
+        const current = window.onPluginMessage;
+        if (current === combinedHandler) return;
+        otherHandler = typeof current === 'function' ? current : null;
+        window.onPluginMessage = combinedHandler;
+    }
+    ensureHandler();
+
+    function r1Start() {
+        ensureHandler();
+        // A pop-up window is open and nothing in it is being typed in: don't search behind it
+        if (document.querySelector('.modal.show') && !focusedTextBox()) {
+            showStatus('Close this window to search by voice', 'error');
+            hideStatus(2500);
+            return false;
+        }
+        target = chooseTarget();
+        if (!r1Send('start')) return false;
+        waiting = true;
+        setMicState(true);
+        showStatus(target === search ? 'Listening… say what to search for' : 'Listening…');
+        return true;
+    }
+    function r1Stop() {
+        if (!waiting) return;
+        r1Send('stop');
+        showStatus('Getting your words…', 'working');
+        startWaitingForWords();
+    }
+
+    window.addEventListener('longPressStart', () => { r1Start(); });
+    window.addEventListener('longPressEnd', () => { voiceLastPressEnd = Date.now(); r1Stop(); });
+
+    // ---------- desktop browsers (Chrome / Edge) ----------
+    let rec = null;
+    function desktopStart() {
+        if (!WebSpeech) return;
+        if (rec) { try { rec.stop(); } catch (e) { /* ignore */ } return; }   // second click = stop
+        target = search;
+        rec = new WebSpeech();
+        rec.lang = navigator.language || 'en-US';
+        rec.interimResults = false;
+        rec.maxAlternatives = 1;
+        waiting = true;
+        setMicState(true);
+        showStatus('Listening… say what to search for');
+        rec.onresult = e => {
+            const words = e.results && e.results[0] && e.results[0][0] ? e.results[0][0].transcript : '';
+            putWords(words);
+        };
+        rec.onerror = e => {
+            waiting = false; setMicState(false);
+            const msg = e.error === 'not-allowed' || e.error === 'service-not-allowed'
+                ? 'Microphone blocked. Allow it in the browser (address bar).'
+                : e.error === 'no-speech' ? "Didn't hear anything. Try again." : 'Voice search stopped (' + e.error + ')';
+            showStatus(msg, 'error');
+            hideStatus(3500);
+        };
+        rec.onend = () => {
+            rec = null;
+            if (waiting) { waiting = false; setMicState(false); hideStatus(0); }
+        };
+        try { rec.start(); } catch (e) { rec = null; waiting = false; setMicState(false); }
+    }
+
+    // ---------- microphone button ----------
+    // r1: tap to start, tap again to stop (same as holding the side button)
+    // Desktop: click to talk; it stops by itself when you finish speaking
+    if (mic) {
+        if (!hasR1Voice() && !WebSpeech) {
+            mic.classList.add('hidden');            // this browser can't do speech to text
+        }
+        mic.addEventListener('click', e => {
+            e.preventDefault();
+            if (hasR1Voice()) {
+                if (waiting) r1Stop(); else { target = search; if (r1Start()) target = search; }
+            } else {
+                desktopStart();
+            }
+        });
+    }
+})();
+
+
+// Search ignores upper/lower case, accents, apostrophes and other punctuation,
+// so "rubies" finds "Rubie's", "spider man" finds "Spider-Man", "pinata" finds "Piñata".
+function normalizeForSearch(text) {
+    return String(text || '')
+        .toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // é -> e, ñ -> n
+        .replace(/['\u2019`]/g, '')                           // Rubie's -> rubies
+        .replace(/[^a-z0-9#]+/g, ' ')                          // dashes, slashes, dots -> space
+        .trim();
+}
+// Cached per item so searching 65,000 items stays fast
+const searchTextCache = new WeakMap();
+function searchTextFor(item) {
+    const src = (item.sku || '') + ' ' + (item.supplier || '') + ' ' + (item.description || '');
+    const c = searchTextCache.get(item);
+    if (c && c.src === src) return c.norm;
+    const norm = ' ' + normalizeForSearch(src) + ' ';
+    searchTextCache.set(item, { src, norm });
+    return norm;
+}
+
+
+// =====================================================================
+// ==================== r1: SCROLL TABLES SIDEWAYS =====================
+// =====================================================================
+// The r1 screen is 240 px wide, so the Items table is wider than the screen.
+// Swipe left/right on any table to move sideways (up/down still scrolls the page),
+// or use the arrow buttons above the Items list. The description stays in place.
+function scrollInventorySideways(dir) {
+    const box = document.querySelector('#inventory-panel .scrollable-table');
+    if (box) box.scrollLeft += dir * Math.max(80, box.clientWidth * 0.6);
+}
+
+(function () {
+    let box = null, startX = 0, startY = 0, startLeft = 0, mode = null, pid = null;
+
+    document.addEventListener('pointerdown', e => {
+        if (!document.body.classList.contains('compact')) return;
+        const t = e.target.closest && e.target.closest('.scrollable-table');
+        if (!t || t.scrollWidth <= t.clientWidth + 2) return;      // nothing to scroll sideways
+        if (e.target.closest('input, select, textarea, button')) return;
+        box = t; startX = e.clientX; startY = e.clientY; startLeft = t.scrollLeft; mode = null; pid = e.pointerId;
+    }, true);
+
+    document.addEventListener('pointermove', e => {
+        if (!box || e.pointerId !== pid) return;
+        const dx = e.clientX - startX, dy = e.clientY - startY;
+        if (!mode) {
+            if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+            mode = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';        // decide once per swipe
+            if (mode === 'y') { box = null; return; }                // let the page scroll up/down
+            try { box.setPointerCapture(pid); } catch (err) { /* ignore */ }   // keep following the finger
+            const sel = window.getSelection && window.getSelection(); if (sel) sel.removeAllRanges();
+        }
+        box.scrollLeft = startLeft - dx;
+        e.preventDefault();
+    }, { capture: true, passive: false });
+
+    const end = e => {
+        if (!box || (e && e.pointerId !== pid)) return;
+        if (mode === 'x') {
+            // a swipe is not a tap: don't open the item under the finger
+            const stopClick = ev => { ev.stopPropagation(); ev.preventDefault(); };
+            document.addEventListener('click', stopClick, { capture: true, once: true });
+            setTimeout(() => document.removeEventListener('click', stopClick, true), 400);
+        }
+        box = null; mode = null; pid = null;
+    };
+    document.addEventListener('pointerup', end, true);
+    document.addEventListener('pointercancel', end, true);
 })();

@@ -780,6 +780,44 @@ kbd { font: inherit; font-size: 0.7rem; font-weight: 600; padding: 1px 5px; bord
 }
 
 /* =====================================================================
+   VOICE SEARCH
+   ===================================================================== */
+.search-wrap { position: relative; }
+.search-wrap #search { padding-right: 2.6rem; }
+.search-mic {
+    position: absolute; right: 4px; top: 4px;
+    width: 28px; height: 28px; padding: 0;
+    border: none; box-shadow: none; background: transparent;
+    color: var(--text-muted); border-radius: 6px;
+}
+.search-mic:hover { background: var(--primary-soft); color: var(--primary); border: none; }
+.search-mic.listening { background: var(--danger); color: #fff; animation: micPulse 1.1s ease-in-out infinite; }
+@keyframes micPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.45); } 50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); } }
+
+.voice-status {
+    position: fixed; left: 50%; top: 14px; transform: translate(-50%, -8px);
+    z-index: 4100;
+    max-width: min(92vw, 460px);
+    padding: 0.55rem 0.95rem;
+    border-radius: 999px;
+    background: var(--text-main); color: #fff;
+    font-size: 0.85rem; font-weight: 600; text-align: center;
+    box-shadow: var(--shadow-lg);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.15s, transform 0.15s;
+}
+.voice-status.show { opacity: 1; transform: translate(-50%, 0); }
+.voice-status.listening { background: var(--danger); }
+.voice-status.listening::before { content: '● '; animation: blink 1s steps(2) infinite; }
+.voice-status.working { background: #1e40af; }
+.voice-status.done { background: #047857; }
+.voice-status.error { background: #92400e; }
+@keyframes blink { 50% { opacity: 0.2; } }
+
+body.compact .search-mic { top: 2px; width: 28px; height: 28px; }
+body.compact .voice-status { top: auto; bottom: 52px; font-size: 0.72rem; padding: 0.4rem 0.7rem; border-radius: 8px; max-width: calc(100vw - 12px); }
+
+/* =====================================================================
    COMPACT LAYOUT (rabbit r1: 240 x 282, and other very small screens)
    Turned on by Settings > Screen layout, or automatically on tiny screens.
    Nothing below affects the desktop layout.
@@ -863,8 +901,6 @@ body.compact #sort, body.compact #sort-btn { display: none; }
 body.compact #inv-supplier-filter { flex: 1 1 100%; max-width: none; min-width: 0; }
 body.compact .check-label { height: 26px; font-size: 0.72rem; }
 body.compact #inventory-table th:nth-child(1), body.compact #inventory-table td:nth-child(1),
-body.compact #inventory-table th:nth-child(4), body.compact #inventory-table td:nth-child(4),
-body.compact #inventory-table th:nth-child(5), body.compact #inventory-table td:nth-child(5),
 body.compact #inventory-table th:nth-child(7), body.compact #inventory-table td:nth-child(7) { display: none; }
 body.compact #inventory-table td:nth-child(2) { min-width: 0; }
 body.compact .reorder-flag, body.compact .in-order-tag:not(:empty) { margin-left: 0.2rem; font-size: 0.62rem; padding: 0 5px; }
@@ -945,8 +981,7 @@ body.compact #companies-panel .panel-header .toolbar > button { flex: 1 1 100%; 
 body.compact thead th { white-space: normal; line-height: 1.2; }
 body.compact #inventory-table td:nth-child(2) { word-break: break-word; }
 body.compact #inventory-table td:nth-child(3), body.compact #inventory-table td:nth-child(6) { padding-left: 0.25rem; padding-right: 0.35rem; }
-body.compact #inventory-table th:nth-child(3), body.compact #inventory-table td:nth-child(3),
-body.compact #inventory-table th:nth-child(6), body.compact #inventory-table td:nth-child(6) { width: 1%; }
+
 body.compact #inventory-table th:nth-child(3) { font-size: 0; }
 body.compact #inventory-table th:nth-child(3)::after { content: "Qty"; font-size: 0.6rem; }
 
@@ -963,3 +998,33 @@ body.compact main {
     overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
 }
 body.compact #compact-nav { position: static; flex: none; }
+
+
+/* r1: the Items table scrolls sideways; the description column stays pinned on the left */
+.sku-compact { display: none; }
+.hscroll-bar { display: none; }
+body.compact .sku-compact { display: block; }
+body.compact .hscroll-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.3rem;
+    margin-bottom: 0.35rem; font-size: 0.62rem; color: var(--text-muted); text-align: center; line-height: 1.2;
+}
+body.compact .hscroll-btn { width: 30px; height: 26px; padding: 0; font-size: 0.7rem; flex: none; }
+body.compact .scrollable-table { overflow-x: auto; touch-action: pan-y; max-width: 100%; }
+body.compact #inventory-panel { overflow: hidden; }
+body.compact #inventory-table { width: max-content; min-width: 100%; }
+body.compact #inventory-table th, body.compact #inventory-table td { white-space: nowrap; }
+body.compact #inventory-table td:nth-child(2), body.compact #inventory-table th:nth-child(2) {
+    position: sticky; left: 0; z-index: 1;
+    width: 128px; min-width: 128px; max-width: 128px;
+    white-space: normal;
+    background: var(--surface);
+    box-shadow: 1px 0 0 var(--border), 4px 0 6px -4px rgba(15, 23, 42, 0.18);
+}
+body.compact #inventory-table th:nth-child(2) { z-index: 3; background: var(--surface-alt); }
+body.compact #inventory-table tbody tr:hover td:nth-child(2) { background: #f8fafc; }
+body.compact #inventory-table td:nth-child(n+3) { padding-left: 0.5rem; padding-right: 0.5rem; }
+/* keep the content area exactly as wide as the screen, so wide tables scroll inside their box */
+body.compact > main, body.compact > #invoice-alerts { min-width: 0; width: 100%; max-width: 100vw; }
+body.compact main { overflow-x: hidden; }
+body.compact .scrollable-table, body.compact .scrollable-table * { -webkit-user-select: none; user-select: none; }
+body.compact .scrollable-table input { -webkit-user-select: text; user-select: text; }
